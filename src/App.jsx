@@ -6,13 +6,17 @@ import {
   Cpu, 
   Eye, 
   Compass, 
-  AlertCircle 
+  AlertCircle,
+  LogOut,
+  UserCheck
 } from 'lucide-react';
 import PidViewer from './components/PidViewer';
 import DataTable from './components/DataTable';
+import AuthPortal from './components/AuthPortal';
 import './App.css';
 
 function App() {
+  const [user, setUser] = useState(null); // User login state
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -89,6 +93,20 @@ function App() {
     setSelectedId(id);
   };
 
+  const handleLogout = () => {
+    setUser(null);
+    setData(null);
+    setFile(null);
+    setError(null);
+    setSelectedId(null);
+  };
+
+  // 1. Render Auth Portal if not logged in
+  if (!user) {
+    return <AuthPortal onLoginSuccess={(username) => setUser(username)} />;
+  }
+
+  // 2. Render Main Dashboard if logged in
   return (
     <div className="app-container">
       {/* Dashboard Header */}
@@ -99,6 +117,43 @@ function App() {
             P&ID Intelligent Auto-Parser
           </h1>
           <div className="subtitle">Identify equipment, instruments, and trace topology maps automatically.</div>
+        </div>
+
+        {/* User profile & Log Out */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+          <div className="glass-panel" style={{ padding: '0.4rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 600 }}>
+            <UserCheck size={14} style={{ color: 'var(--secondary)' }} />
+            <span>Active Agent: {user}</span>
+          </div>
+          <button 
+            onClick={handleLogout}
+            style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              color: 'hsl(0, 90%, 75%)',
+              padding: '0.45rem 1rem',
+              borderRadius: 'var(--radius-sm)',
+              fontFamily: 'var(--font-family)',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              cursor: 'pointer',
+              transition: 'var(--transition)'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.background = 'rgba(239, 68, 68, 0.15)';
+              e.target.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'rgba(239, 68, 68, 0.08)';
+              e.target.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+            }}
+          >
+            <LogOut size={14} />
+            <span>Logout</span>
+          </button>
         </div>
       </header>
 
