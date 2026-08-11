@@ -1,0 +1,11 @@
+Flask
+flask-cors
+gunicorn
+opencv-python-headless
+numpy
+Pillow
+PyMuPDF
+easyocr
+pandas
+openpyxl
+ultralytics

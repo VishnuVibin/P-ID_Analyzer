@@ -22,3 +22,17 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+symenv/
+venv/
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+credentials.json
+uploads/
+*.db

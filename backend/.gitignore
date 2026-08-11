@@ -1,0 +1,177 @@
+# ================================
+# Python
+# ================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ================================
+# Virtual Environments
+# ================================
+symenv/
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ================================
+# Environment Variables / Secrets
+# ================================
+
+.env
+.env.*
+!.env.example
+
+# API keys / credentials
+*.key
+*.pem
+secrets.json
+credentials.json
+
+# ================================
+# IDE / Editors
+# ================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ================================
+# Jupyter Notebook
+# ================================
+
+.ipynb_checkpoints/
+
+# ================================
+# Python Build / Packaging
+# ================================
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ================================
+# Testing / Coverage
+# ================================
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ================================
+# Logs
+# ================================
+
+*.log
+logs/
+
+# ================================
+# Temporary Files
+# ================================
+
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# ================================
+# P&ID Uploaded / Generated Files
+# ================================
+
+uploads/
+uploaded_files/
+output/
+outputs/
+results/
+temp/
+tmp/
+
+# Generated images
+annotated/
+annotated_images/
+
+# Generated Excel files
+*.xlsx
+*.xls
+
+# Generated CSV files
+*.csv
+
+# ================================
+# P&ID Datasets
+# ================================
+
+datasets/
+dataset/
+data/
+training_data/
+validation_data/
+test_data/
+
+# ================================
+# YOLO
+# ================================
+
+runs/
+runs/detect/
+runs/train/
+runs/val/
+
+# YOLO model weights
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# ================================
+# Machine Learning Models
+# ================================
+
+models/
+checkpoints/
+weights/
+
+# ================================
+# TensorFlow
+# ================================
+
+*.h5
+*.keras
+saved_model/
+
+# ================================
+# Roboflow
+# ================================
+
+roboflow/
+roboflow_data/
+
+# ================================
+# OS Files
+# ================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ================================
+# Render / Deployment
+# ================================
+
+.render/
+
+# ================================
+# Local configuration
+# ================================
+
+config.local.py
+settings.local.py
