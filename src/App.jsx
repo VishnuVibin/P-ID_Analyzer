@@ -13,6 +13,7 @@ import {
 import PidViewer from './components/PidViewer';
 import DataTable from './components/DataTable';
 import AuthPortal from './components/AuthPortal';
+import { API_BASE_URL } from './config';
 import './App.css';
 
 function App() {
@@ -65,7 +66,7 @@ function App() {
     formData.append('file', uploadFile);
 
     try {
-      const response = await fetch('http://localhost:5000/api/process', {
+      const response = await fetch(`${API_BASE_URL}/api/process`, {
         method: 'POST',
         body: formData
       });
@@ -86,7 +87,7 @@ function App() {
   };
 
   const handleDownloadExcel = () => {
-    window.open('http://localhost:5000/api/download_excel', '_blank');
+    window.open(`${API_BASE_URL}/api/download_excel`, '_blank');
   };
 
   const handleSelectId = (id) => {

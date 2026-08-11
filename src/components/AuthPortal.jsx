@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Mail, Lock, User, ArrowRight, CheckCircle } from 'lucide-react';
 import './AuthPortal.css';
+import { API_BASE_URL } from '../config';
 
 const AuthPortal = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -157,7 +158,7 @@ const AuthPortal = ({ onLoginSuccess }) => {
     const endpoint = isLogin ? '/api/login' : '/api/register';
 
     try {
-      const response = await fetch(`http://localhost:5000${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })

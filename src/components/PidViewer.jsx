@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { API_BASE_URL } from '../config';
 
 const PidViewer = ({ 
   imageUrl, 
@@ -130,7 +131,7 @@ const PidViewer = ({
       >
         {imageUrl && (
           <img 
-            src={`http://localhost:5000${imageUrl}`} 
+            src={`${API_BASE_URL}${imageUrl}`} 
             alt="P&ID Diagram" 
             className="pid-image" 
             style={{ width: `${width}px`, height: `${height}px` }}
