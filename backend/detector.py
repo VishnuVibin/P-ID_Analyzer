@@ -2,10 +2,8 @@ import os
 import re
 import cv2
 import numpy as np
-import fitz  # PyMuPDF
-import easyocr
+import pymupdf  # PyMuPDF
 import pandas as pd
-from ultralytics import YOLO
 
 class PIDDetector:
     def __init__(self):
@@ -15,89 +13,113 @@ class PIDDetector:
             "runs", "segment", "train", "weights", "best.pt"
         )
         self.yolo_model = None
-        if os.path.exists(self.yolo_model_path):
-            try:
-                self.yolo_model = YOLO(self.yolo_model_path)
-            except Exception as e:
-                print("Error loading YOLO model:", e)
+        # YOLO is loaded lazily only if the model file exists and connection tracing needs it.
         
         self.ocr_reader = None
 
     def get_ocr_reader(self):
         if self.ocr_reader is None:
-            self.ocr_reader = easyocr.Reader(['en'], gpu=False)
+            # Import and initialize EasyOCR only when OCR is actually required.
+            import easyocr
+            self.ocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
         return self.ocr_reader
 
-    def parse_pdf(self, pdf_path, page_num=0):
-        doc = fitz.open(pdf_path)
-        if page_num >= len(doc):
-            page_num = 0
-        page = doc.load_page(page_num)
+        doc = pymupdf.open(pdf_path)
+        try:
+            if page_num >= len(doc):
+                page_num = 0
+            page = doc.load_page(page_num)
 
-        zoom = 4.0
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
-        img_bytes = pix.tobytes("png")
-        file_bytes = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            # Render at a controlled resolution to avoid excessive RAM usage on Render.
+            # 200 DPI is substantially smaller than the previous 4x zoom.
+            target_dpi = 200
+            zoom = target_dpi / 72.0
+            mat = pymupdf.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
 
-        text_blocks = []
-        words = page.get_text("words")
-        if words:
-            temp_lines = {}
-            for w in words:
-                x0, y0, x1, y1, word, block_idx, line_idx, _ = w
-                rx0, ry0, rx1, ry1 = x0 * zoom, y0 * zoom, x1 * zoom, y1 * zoom
-                key = (block_idx, line_idx)
-                if key not in temp_lines:
-                    temp_lines[key] = []
-                temp_lines[key].append({'text': word, 'bbox': [rx0, ry0, rx1, ry1]})
+            img_bytes = pix.tobytes("jpg", jpg_quality=85)
+            file_bytes = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-            for key, line_words in temp_lines.items():
-                line_words.sort(key=lambda item: item['bbox'][0])
-                merged_text = ""
-                min_x0 = float('inf')
-                min_y0 = float('inf')
-                max_x1 = float('-inf')
-                max_y1 = float('-inf')
-                for lw in line_words:
-                    if merged_text:
-                        merged_text += " "
-                    merged_text += lw['text']
-                    min_x0 = min(min_x0, lw['bbox'][0])
-                    min_y0 = min(min_y0, lw['bbox'][1])
-                    max_x1 = max(max_x1, lw['bbox'][2])
-                    max_y1 = max(max_y1, lw['bbox'][3])
-                text_blocks.append({
-                    'text': merged_text,
-                    'bbox': [int(min_x0), int(min_y0), int(max_x1), int(max_y1)]
-                })
-        else:
-            text_blocks = self.ocr_image(img)
+            # Hard cap image dimensions so very large P&IDs cannot exhaust memory.
+            max_dim = 3000
+            h, w = img.shape[:2]
+            if max(h, w) > max_dim:
+                scale = max_dim / max(h, w)
+                img = cv2.resize(
+                    img,
+                    (int(w * scale), int(h * scale)),
+                    interpolation=cv2.INTER_AREA
+                )
+                # Keep text coordinates consistent with the resized image.
+                coord_scale = scale
+            else:
+                coord_scale = 1.0
 
-        return img, text_blocks
+            text_blocks = []
+            words = page.get_text("words")
+            if words:
+                temp_lines = {}
+                for w in words:
+                    x0, y0, x1, y1, word, block_idx, line_idx, _ = w
+                    rx0 = x0 * zoom * coord_scale
+                    ry0 = y0 * zoom * coord_scale
+                    rx1 = x1 * zoom * coord_scale
+                    ry1 = y1 * zoom * coord_scale
+                    key = (block_idx, line_idx)
+                    if key not in temp_lines:
+                        temp_lines[key] = []
+                    temp_lines[key].append({
+                        'text': word,
+                        'bbox': [rx0, ry0, rx1, ry1]
+                    })
+
+                for key, line_words in temp_lines.items():
+                    line_words.sort(key=lambda item: item['bbox'][0])
+                    merged_text = ""
+                    min_x0 = float('inf')
+                    min_y0 = float('inf')
+                    max_x1 = float('-inf')
+                    max_y1 = float('-inf')
+                    for lw in line_words:
+                        if merged_text:
+                            merged_text += " "
+                        merged_text += lw['text']
+                        min_x0 = min(min_x0, lw['bbox'][0])
+                        min_y0 = min(min_y0, lw['bbox'][1])
+                        max_x1 = max(max_x1, lw['bbox'][2])
+                        max_y1 = max(max_y1, lw['bbox'][3])
+                    text_blocks.append({
+                        'text': merged_text,
+                        'bbox': [
+                            int(min_x0), int(min_y0),
+                            int(max_x1), int(max_y1)
+                        ]
+                    })
+            else:
+                text_blocks = self.ocr_image(img)
+
+            return img, text_blocks
+        finally:
+            doc.close()
 
     def ocr_image(self, img):
-        temp_file = "temp_ocr_img.jpg"
-        cv2.imwrite(temp_file, img)
-        try:
-            reader = self.get_ocr_reader()
-            ocr_results = reader.readtext(temp_file)
-        finally:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        # Run OCR directly on the image to avoid an extra disk file and memory copy.
+        reader = self.get_ocr_reader()
+        ocr_results = reader.readtext(img)
 
         text_blocks = []
-        for bbox, text, prob in ocr_results:
+        for bbox, text_value, prob in ocr_results:
             if prob > 0.25:
                 x0 = int(min(pt[0] for pt in bbox))
                 y0 = int(min(pt[1] for pt in bbox))
                 x1 = int(max(pt[0] for pt in bbox))
                 y1 = int(max(pt[1] for pt in bbox))
                 text_blocks.append({
-                    'text': text.strip(),
+                    'text': text_value.strip(),
                     'bbox': [x0, y0, x1, y1]
                 })
+
         return text_blocks
 
     def detect_symbols(self, img, text_blocks):
@@ -347,7 +369,20 @@ class PIDDetector:
         for idx, s in enumerate(symbols):
             s['id'] = f"obj_{idx}"
 
+        # Release large intermediate OpenCV arrays before returning.
+        del gray, binary, contours
         return symbols, grouped_text_blocks
+
+    def get_yolo_model(self):
+        if self.yolo_model is None and os.path.exists(self.yolo_model_path):
+            try:
+                # Import Ultralytics only when YOLO tracing is actually requested.
+                from ultralytics import YOLO
+                self.yolo_model = YOLO(self.yolo_model_path)
+            except Exception as e:
+                print("Error loading YOLO model:", e)
+                self.yolo_model = None
+        return self.yolo_model
 
     def trace_connections(self, img, symbols, text_blocks):
         H, W, _ = img.shape
@@ -358,10 +393,11 @@ class PIDDetector:
             cv2.THRESH_BINARY_INV, 15, 4
         )
 
-        # Use YOLO model pipeline segmentation to guide pathfinding
-        if self.yolo_model is not None:
+        # Use YOLO model pipeline segmentation to guide pathfinding.
+        yolo_model = self.get_yolo_model()
+        if yolo_model is not None:
             try:
-                results = self.yolo_model.predict(source=img, conf=0.20, device="cpu", verbose=False)
+                results = yolo_model.predict(source=img, conf=0.20, device="cpu", verbose=False)
                 res = results[0]
                 yolo_mask = np.zeros((H, W), dtype=np.uint8)
                 if hasattr(res, "masks") and res.masks is not None and hasattr(res.masks, "data"):
@@ -458,6 +494,8 @@ class PIDDetector:
                     })
                     conn_id += 1
 
+        # Release large connection-tracing arrays before returning.
+        del gray, binary, dilated, grid
         return connections
 
     def _bfs_grid(self, grid, starts, tx0, ty0, tx1, ty1, max_depth=800):
