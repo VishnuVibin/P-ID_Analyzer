@@ -242,7 +242,11 @@ function App() {
  
               {/* Viewport Canvas wrapper */} 
               <PidViewer 
-                imageUrl={`${API_BASE_URL}${data.image_url}`} 
+                imageUrl={
+                  data.image_url.startsWith('http')
+                    ? data.image_url
+                    : `${API_BASE_URL}${data.image_url}`
+                }
                 width={data.width} 
                 height={data.height} 
                 symbols={data.symbols} 
