@@ -5,7 +5,15 @@ import cv2
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+import detector
 from detector import PIDDetector
+
+print("====================================")
+print("DETECTOR FILE:", detector.__file__)
+print("HAS parse_pdf:", hasattr(PIDDetector, "parse_pdf"))
+print("PIDDetector methods:", [x for x in dir(PIDDetector) if "parse" in x.lower()])
+print("====================================")
 
 REACT_DIST_FOLDER = os.path.join(os.path.dirname(__file__), 'frontend', 'dist')
 app = Flask(__name__, static_folder=REACT_DIST_FOLDER, static_url_path='/')
