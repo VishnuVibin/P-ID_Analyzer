@@ -103,6 +103,102 @@ class PIDDetector:
         finally:
             doc.close()
 
+    def parse_pdf(self, pdf_path, page_num=0):
+        doc = pymupdf.open(pdf_path)
+        try:
+            if page_num >= len(doc):
+                page_num = 0
+
+            page = doc.load_page(page_num)
+
+            # Lower-memory PDF rendering for Render.
+            target_dpi = 200
+            zoom = target_dpi / 72.0
+            mat = pymupdf.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+
+            img_bytes = pix.tobytes("jpg", jpg_quality=85)
+            file_bytes = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+            if img is None:
+                raise ValueError("Failed to convert PDF page to image")
+
+            # Prevent very large P&ID pages from exhausting Render RAM.
+            max_dim = 3000
+            h, w = img.shape[:2]
+
+            if max(h, w) > max_dim:
+                scale = max_dim / max(h, w)
+                img = cv2.resize(
+                    img,
+                    (int(w * scale), int(h * scale)),
+                    interpolation=cv2.INTER_AREA
+                )
+                coord_scale = scale
+            else:
+                coord_scale = 1.0
+
+            text_blocks = []
+            words = page.get_text("words")
+
+            if words:
+                temp_lines = {}
+
+                for w in words:
+                    x0, y0, x1, y1, word, block_idx, line_idx, _ = w
+
+                    rx0 = x0 * zoom * coord_scale
+                    ry0 = y0 * zoom * coord_scale
+                    rx1 = x1 * zoom * coord_scale
+                    ry1 = y1 * zoom * coord_scale
+
+                    key = (block_idx, line_idx)
+
+                    if key not in temp_lines:
+                        temp_lines[key] = []
+
+                    temp_lines[key].append({
+                        'text': word,
+                        'bbox': [rx0, ry0, rx1, ry1]
+                    })
+
+                for key, line_words in temp_lines.items():
+                    line_words.sort(key=lambda item: item['bbox'][0])
+
+                    merged_text = ""
+                    min_x0 = float('inf')
+                    min_y0 = float('inf')
+                    max_x1 = float('-inf')
+                    max_y1 = float('-inf')
+
+                    for lw in line_words:
+                        if merged_text:
+                            merged_text += " "
+
+                        merged_text += lw['text']
+                        min_x0 = min(min_x0, lw['bbox'][0])
+                        min_y0 = min(min_y0, lw['bbox'][1])
+                        max_x1 = max(max_x1, lw['bbox'][2])
+                        max_y1 = max(max_y1, lw['bbox'][3])
+
+                    text_blocks.append({
+                        'text': merged_text,
+                        'bbox': [
+                            int(min_x0),
+                            int(min_y0),
+                            int(max_x1),
+                            int(max_y1)
+                        ]
+                    })
+            else:
+                text_blocks = self.ocr_image(img)
+
+            return img, text_blocks
+
+        finally:
+            doc.close()
+
     def ocr_image(self, img):
         # Run OCR directly on the image to avoid an extra disk file and memory copy.
         reader = self.get_ocr_reader()
