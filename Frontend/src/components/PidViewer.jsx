@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { API_BASE_URL } from '../config';
 
 const PidViewer = ({ 
   imageUrl, 
@@ -35,7 +34,6 @@ const PidViewer = ({
 
   // Handle zooming via mouse wheel
   const handleWheel = (e) => {
-    e.preventDefault();
     if (!containerRef.current) return;
 
     const zoomIntensity = 0.1;
@@ -131,9 +129,9 @@ const PidViewer = ({
       >
         {imageUrl && (
           <img 
-            src={`${API_BASE_URL}${imageUrl}`} 
-            alt="P&ID Diagram" 
-            className="pid-image" 
+            src={imageUrl}
+            alt="P&ID Diagram"
+            className="pid-image"
             style={{ width: `${width}px`, height: `${height}px` }}
           />
         )}
