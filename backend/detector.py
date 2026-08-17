@@ -15,7 +15,31 @@ class PIDDetector:
         self.yolo_model = None
         # YOLO is loaded lazily only if the model file exists and connection tracing needs it.
         
+        self.symbol_model = None
         self.ocr_reader = None
+
+    def get_symbol_model(self):
+        if self.symbol_model is None:
+            # Find best weights paths
+            paths_to_check = [
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "runs", "detect", "train-3", "weights", "best.pt"),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "runs", "detect", "train-2", "weights", "best.pt"),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "runs", "detect", "train", "weights", "best.pt"),
+                os.path.join(os.path.dirname(__file__), "weights", "yolo_symbol_best.pt"),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "yolov8n.pt")
+            ]
+            for p in paths_to_check:
+                if os.path.exists(p):
+                    try:
+                        from ultralytics import YOLO
+                        m = YOLO(p)
+                        if len(m.names) > 80: # Symbol detector has 203 classes
+                            self.symbol_model = m
+                            print(f"Successfully loaded YOLO symbol model from {p} with {len(m.names)} classes.")
+                            break
+                    except Exception as e:
+                        print(f"Error loading symbol model from {p}: {e}")
+        return self.symbol_model
 
     def get_ocr_reader(self):
         if self.ocr_reader is None:
@@ -288,176 +312,264 @@ class PIDDetector:
             })
             used_indices.add(i)
 
-        # 2. Extract contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # 3. Associate tags with shapes
-        symbol_id_counter = 0
-        
-        # Define component classification helper
-        def get_class_info(tag_str):
-            tag_upper = tag_str.upper()
-            
-            # Class 2: Circular loop
-            if any(p in tag_upper for p in ['RV-', 'CL-', 'PRV-', 'SDV-']):
-                return 2, 'Circular loop'
-            # Class 1: Control Valve
-            elif any(p in tag_upper for p in ['FCV-', 'TCV-', 'PCV-', 'LCV-', 'CV-', '-CV']):
-                return 1, 'Control Valve'
-            # Class 0: Valve
-            elif any(p in tag_upper for p in ['XV-', 'HV-', 'GH-', 'AB-', 'WX-', 'ST-', 'UV-']):
-                return 0, 'Valve'
-            # Class 3: Spectacle Blind
-            elif 'SB-' in tag_upper or 'SPECTACLE' in tag_upper:
-                return 3, 'Spectacle Blind'
-            # Class 4: Inline Mixer
-            elif 'CS' == tag_upper or 'MX-' in tag_upper:
-                return 4, 'Inline Mixer'
-            # Class 4: Undefined
-            elif 'INS' in tag_upper:
-                return 4, 'Undefined'
-            # Class 5: Instrument (default for gauges and loops)
-            else:
-                return 5, 'Instrument'
+        # Check if YOLO symbol model is available
+        symbol_model = self.get_symbol_model()
+        yolo_success = False
 
-        # Loop through reconstructed tags and map them to nearest contour shapes
-        for tb in grouped_text_blocks:
-            tx = tb['text']
-            bx = tb['bbox']
-            
-            m = prefix_pattern.search(tx)
-            if m:
-                # Reconstruct tag cleanly: e.g. "PT-1112B-01"
-                parts = [p.strip() for p in tx.split('-') if p.strip()]
-                clean_tag = "-".join(parts)
+        if symbol_model is not None:
+            try:
+                results = symbol_model.predict(source=img, conf=0.15, device="cpu", verbose=False)
+                res = results[0]
+                symbol_id_counter = 0
                 
-                # Filter out long notes blocks and false positive text blocks
-                has_digit = any(c.isdigit() for c in clean_tag)
-                if len(clean_tag) > 25:
-                    continue
-                if not has_digit and len(clean_tag) > 5:
-                    continue
-                
-                tx_cx = (bx[0] + bx[2]) / 2
-                tx_cy = (bx[1] + bx[3]) / 2
-                
-                # Find nearest graphical contour
-                nearest_contour = None
-                min_dist = float('inf')
-                for c in contours:
-                    area = cv2.contourArea(c)
-                    if area < 100:  # skip noise
-                        continue
-                    # Calculate center of contour
-                    M = cv2.moments(c)
-                    if M["m00"] == 0:
-                        continue
-                    ccx = int(M["m10"] / M["m00"])
-                    ccy = int(M["m01"] / M["m00"])
+                for box in res.boxes:
+                    xmin, ymin, xmax, ymax = box.xyxy[0].tolist()
+                    conf = float(box.conf[0])
+                    class_id = int(box.cls[0])
+                    cls_name = symbol_model.names[class_id]
                     
-                    dist = np.hypot(ccx - tx_cx, ccy - tx_cy)
-                    if dist < min_dist:
-                        min_dist = dist
-                        nearest_contour = c
+                    cx = int((xmin + xmax) / 2)
+                    cy = int((ymin + ymax) / 2)
+                    radius = int(max(xmax - xmin, ymax - ymin) / 2)
+                    
+                    # 160x160 box centered
+                    xmin_s = max(0, cx - 80)
+                    xmax_s = min(W, cx + 80)
+                    ymin_s = max(0, cy - 80)
+                    ymax_s = min(H, cy + 80)
+                    
+                    # Try to match with an OCR tag
+                    matched_tag = None
+                    min_dist = float('inf')
+                    
+                    for tb in grouped_text_blocks:
+                        tx = tb['text']
+                        bx = tb['bbox']
+                        
+                        m = prefix_pattern.search(tx)
+                        if m:
+                            parts = [p.strip() for p in tx.split('-') if p.strip()]
+                            clean_tag = "-".join(parts)
+                            
+                            has_digit = any(c.isdigit() for c in clean_tag)
+                            if len(clean_tag) > 25:
+                                continue
+                            if not has_digit and len(clean_tag) > 5:
+                                continue
+                                
+                            tx_cx = (bx[0] + bx[2]) / 2
+                            tx_cy = (bx[1] + bx[3]) / 2
+                            
+                            dist = np.hypot(cx - tx_cx, cy - tx_cy)
+                            # OCR tag should be relatively close to the symbol center
+                            if dist < 120 and dist < min_dist:
+                                min_dist = dist
+                                matched_tag = clean_tag.upper()
+                    
+                    if matched_tag:
+                        tag = matched_tag
+                    else:
+                        tag = cls_name.upper()
+                        
+                    # Filter out duplicates
+                    duplicate = False
+                    for s in symbols:
+                        if np.hypot(cx - s['center'][0], cy - s['center'][1]) < 40:
+                            duplicate = True
+                            break
+                    if duplicate:
+                        continue
+                        
+                    symbols.append({
+                        'id': f"obj_{symbol_id_counter}",
+                        'tag': tag,
+                        'type': cls_name,
+                        'class_id': class_id,
+                        'bbox': [int(xmin_s), int(ymin_s), int(xmax_s), int(ymax_s)],
+                        'center': [cx, cy],
+                        'radius': radius
+                    })
+                    mapped_centers.append((cx, cy))
+                    symbol_id_counter += 1
                 
-                cx, cy = int(tx_cx), int(tx_cy)
-                if nearest_contour is not None and min_dist < 100:
-                    # Use contour center
-                    M = cv2.moments(nearest_contour)
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
+                yolo_success = True
+            except Exception as e:
+                print("Error during YOLO symbol detection prediction:", e)
+                # Fallback to contours
+                symbols = []
+                mapped_centers = []
+
+        if not yolo_success:
+            # 2. Extract contours
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # 3. Associate tags with shapes
+            symbol_id_counter = 0
+            
+            # Define component classification helper
+            def get_class_info(tag_str):
+                tag_upper = tag_str.upper()
                 
-                # Filter out overlapping detections
-                duplicate = False
-                for mcx, mcy in mapped_centers:
-                    if np.hypot(cx - mcx, cy - mcy) < 60:
-                        duplicate = True
-                        break
-                if duplicate:
+                # Class 2: Circular loop
+                if any(p in tag_upper for p in ['RV-', 'CL-', 'PRV-', 'SDV-']):
+                    return 2, 'Circular loop'
+                # Class 1: Control Valve
+                elif any(p in tag_upper for p in ['FCV-', 'TCV-', 'PCV-', 'LCV-', 'CV-', '-CV']):
+                    return 1, 'Control Valve'
+                # Class 0: Valve
+                elif any(p in tag_upper for p in ['XV-', 'HV-', 'GH-', 'AB-', 'WX-', 'ST-', 'UV-']):
+                    return 0, 'Valve'
+                # Class 3: Spectacle Blind
+                elif 'SB-' in tag_upper or 'SPECTACLE' in tag_upper:
+                    return 3, 'Spectacle Blind'
+                # Class 4: Inline Mixer
+                elif 'CS' == tag_upper or 'MX-' in tag_upper:
+                    return 4, 'Inline Mixer'
+                # Class 4: Undefined
+                elif 'INS' in tag_upper:
+                    return 4, 'Undefined'
+                # Class 5: Instrument (default for gauges and loops)
+                else:
+                    return 5, 'Instrument'
+            
+            # Loop through reconstructed tags and map them to nearest contour shapes
+            for tb in grouped_text_blocks:
+                tx = tb['text']
+                bx = tb['bbox']
+                
+                m = prefix_pattern.search(tx)
+                if m:
+                    # Reconstruct tag cleanly: e.g. "PT-1112B-01"
+                    parts = [p.strip() for p in tx.split('-') if p.strip()]
+                    clean_tag = "-".join(parts)
+                    
+                    # Filter out long notes blocks and false positive text blocks
+                    has_digit = any(c.isdigit() for c in clean_tag)
+                    if len(clean_tag) > 25:
+                        continue
+                    if not has_digit and len(clean_tag) > 5:
+                        continue
+                    
+                    tx_cx = (bx[0] + bx[2]) / 2
+                    tx_cy = (bx[1] + bx[3]) / 2
+                    
+                    # Find nearest graphical contour
+                    nearest_contour = None
+                    min_dist = float('inf')
+                    for c in contours:
+                        area = cv2.contourArea(c)
+                        if area < 100:  # skip noise
+                            continue
+                        # Calculate center of contour
+                        M = cv2.moments(c)
+                        if M["m00"] == 0:
+                            continue
+                        ccx = int(M["m10"] / M["m00"])
+                        ccy = int(M["m01"] / M["m00"])
+                        
+                        dist = np.hypot(ccx - tx_cx, ccy - tx_cy)
+                        if dist < min_dist:
+                            min_dist = dist
+                            nearest_contour = c
+                    
+                    cx, cy = int(tx_cx), int(tx_cy)
+                    if nearest_contour is not None and min_dist < 100:
+                        # Use contour center
+                        M = cv2.moments(nearest_contour)
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+                    
+                    # Filter out overlapping detections
+                    duplicate = False
+                    for mcx, mcy in mapped_centers:
+                        if np.hypot(cx - mcx, cy - mcy) < 60:
+                            duplicate = True
+                            break
+                    if duplicate:
+                        continue
+                    
+                    # Get class
+                    class_id, comp_name = get_class_info(clean_tag)
+                    
+                    # Bounding box: exactly 160x160 centered at (cx, cy)
+                    xmin = max(0, cx - 80)
+                    xmax = min(W, cx + 80)
+                    ymin = max(0, cy - 80)
+                    ymax = min(H, cy + 80)
+                    
+                    symbols.append({
+                        'id': f"obj_{symbol_id_counter}",
+                        'tag': clean_tag.upper(),
+                        'type': comp_name,
+                        'class_id': class_id,
+                        'bbox': [xmin, ymin, xmax, ymax],
+                        'center': [cx, cy],
+                        'radius': 80
+                    })
+                    mapped_centers.append((cx, cy))
+                    symbol_id_counter += 1
+            
+            # 4. Pure Geometric Search for Untagged Components (e.g. manual valves or spectacle blinds)
+            for c in contours:
+                area = cv2.contourArea(c)
+                perimeter = cv2.arcLength(c, True)
+                if perimeter == 0 or area < 200:
                     continue
                 
-                # Get class
-                class_id, comp_name = get_class_info(clean_tag)
+                # Calculate moments
+                M = cv2.moments(c)
+                if M["m00"] == 0:
+                    continue
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
                 
-                # Bounding box: exactly 160x160 centered at (cx, cy)
-                xmin = max(0, cx - 80)
-                xmax = min(W, cx + 80)
-                ymin = max(0, cy - 80)
-                ymax = min(H, cy + 80)
+                # Check if this contour center is close to any already mapped tag center
+                already_mapped = False
+                for mcx, mcy in mapped_centers:
+                    if np.hypot(cx - mcx, cy - mcy) < 70:
+                        already_mapped = True
+                        break
+                if already_mapped:
+                    continue
+                    
+                # Classify contour purely on geometry
+                solidity = area / cv2.contourArea(cv2.convexHull(c)) if cv2.contourArea(cv2.convexHull(c)) > 0 else 0
+                circularity = 4 * np.pi * area / (perimeter * perimeter)
                 
-                symbols.append({
-                    'id': f"obj_{symbol_id_counter}",
-                    'tag': clean_tag.upper(),
-                    'type': comp_name,
-                    'class_id': class_id,
-                    'bbox': [xmin, ymin, xmax, ymax],
-                    'center': [cx, cy],
-                    'radius': 80
-                })
-                mapped_centers.append((cx, cy))
-                symbol_id_counter += 1
-
-        # 4. Pure Geometric Search for Untagged Components (e.g. manual valves or spectacle blinds)
-        for c in contours:
-            area = cv2.contourArea(c)
-            perimeter = cv2.arcLength(c, True)
-            if perimeter == 0 or area < 200:
-                continue
-            
-            # Calculate moments
-            M = cv2.moments(c)
-            if M["m00"] == 0:
-                continue
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            
-            # Check if this contour center is close to any already mapped tag center
-            already_mapped = False
-            for mcx, mcy in mapped_centers:
-                if np.hypot(cx - mcx, cy - mcy) < 70:
-                    already_mapped = True
-                    break
-            if already_mapped:
-                continue
+                x_b, y_b, w_b, h_b = cv2.boundingRect(c)
+                ar = max(w_b / h_b, h_b / w_b) if h_b > 0 and w_b > 0 else 1
                 
-            # Classify contour purely on geometry
-            solidity = area / cv2.contourArea(cv2.convexHull(c)) if cv2.contourArea(cv2.convexHull(c)) > 0 else 0
-            circularity = 4 * np.pi * area / (perimeter * perimeter)
-            
-            x_b, y_b, w_b, h_b = cv2.boundingRect(c)
-            ar = max(w_b / h_b, h_b / w_b) if h_b > 0 and w_b > 0 else 1
-            
-            class_id = None
-            comp_name = None
-            
-            # Circle test -> Class 5: Instrument
-            if circularity > 0.75 and 20 < w_b < 120:
-                class_id, comp_name = 5, 'Instrument'
-            # Bow-tie test -> Class 0: Valve
-            elif 0.45 < solidity < 0.70 and 1.2 < ar < 2.5 and 200 < area < 2500:
-                class_id, comp_name = 0, 'Valve'
-            # Figure-8 test -> Class 3: Spectacle Blind
-            elif 0.70 < solidity < 0.88 and 1.6 < ar < 2.4 and 150 < area < 1000:
-                class_id, comp_name = 3, 'Spectacle Blind'
-            
-            if class_id is not None:
-                # 160x160 box centered
-                xmin = max(0, cx - 80)
-                xmax = min(W, cx + 80)
-                ymin = max(0, cy - 80)
-                ymax = min(H, cy + 80)
+                class_id = None
+                comp_name = None
                 
-                symbols.append({
-                    'id': f"obj_{symbol_id_counter}",
-                    'tag': 'UNDEFINED',
-                    'type': comp_name,
-                    'class_id': class_id,
-                    'bbox': [xmin, ymin, xmax, ymax],
-                    'center': [cx, cy],
-                    'radius': 80
-                })
-                mapped_centers.append((cx, cy))
-                symbol_id_counter += 1
+                # Circle test -> Class 5: Instrument
+                if circularity > 0.75 and 20 < w_b < 120:
+                    class_id, comp_name = 5, 'Instrument'
+                # Bow-tie test -> Class 0: Valve
+                elif 0.45 < solidity < 0.70 and 1.2 < ar < 2.5 and 200 < area < 2500:
+                    class_id, comp_name = 0, 'Valve'
+                # Figure-8 test -> Class 3: Spectacle Blind
+                elif 0.70 < solidity < 0.88 and 1.6 < ar < 2.4 and 150 < area < 1000:
+                    class_id, comp_name = 3, 'Spectacle Blind'
+                
+                if class_id is not None:
+                    # 160x160 box centered
+                    xmin = max(0, cx - 80)
+                    xmax = min(W, cx + 80)
+                    ymin = max(0, cy - 80)
+                    ymax = min(H, cy + 80)
+                    
+                    symbols.append({
+                        'id': f"obj_{symbol_id_counter}",
+                        'tag': 'UNDEFINED',
+                        'type': comp_name,
+                        'class_id': class_id,
+                        'bbox': [xmin, ymin, xmax, ymax],
+                        'center': [cx, cy],
+                        'radius': 80
+                    })
+                    mapped_centers.append((cx, cy))
+                    symbol_id_counter += 1
 
         # Sort symbols by coordinates to make Excel sheet tidy
         symbols.sort(key=lambda s: (s['center'][1], s['center'][0]))
@@ -466,7 +578,9 @@ class PIDDetector:
             s['id'] = f"obj_{idx}"
 
         # Release large intermediate OpenCV arrays before returning.
-        del gray, binary, contours
+        if 'contours' in locals():
+            del contours
+        del gray, binary
         return symbols, grouped_text_blocks
 
     def get_yolo_model(self):

@@ -4,15 +4,14 @@ const DataTable = ({ symbols, connections, selectedId, onSelect }) => {
   const [activeTab, setActiveTab] = useState('symbols'); // 'symbols' or 'connections'
 
   const getBadgeClass = (type) => {
-    switch (type.toLowerCase()) {
-      case 'instrument': return 'badge instrument';
-      case 'valve': return 'badge valve';
-      case 'vessel': return 'badge vessel';
-      case 'process line': return 'badge process';
-      case 'electric signal': return 'badge electric';
-      case 'pneumatic signal': return 'badge pneumatic';
-      default: return 'badge';
-    }
+    const t = type.toLowerCase();
+    if (t.includes('valve')) return 'badge valve';
+    if (t.includes('instrument')) return 'badge instrument';
+    if (t.includes('vessel') || t.includes('pump') || t.includes('compressor') || t.includes('drum') || t.includes('exchanger') || t.includes('blower') || t.includes('tower') || t.includes('furnace') || t.includes('reactor') || t.includes('mixer')) return 'badge vessel';
+    if (t.includes('process line')) return 'badge process';
+    if (t.includes('electric signal')) return 'badge electric';
+    if (t.includes('pneumatic signal')) return 'badge pneumatic';
+    return 'badge';
   };
 
   return (

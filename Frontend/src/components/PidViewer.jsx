@@ -91,12 +91,11 @@ const PidViewer = ({
   };
 
   const getOverlayColor = (type) => {
-    switch (type) {
-      case 'Instrument': return 'var(--color-instrument)';
-      case 'Valve': return 'var(--color-valve)';
-      case 'Vessel': return 'var(--color-vessel)';
-      default: return 'var(--secondary)';
-    }
+    const t = type.toLowerCase();
+    if (t.includes('valve')) return 'var(--color-valve)';
+    if (t.includes('instrument')) return 'var(--color-instrument)';
+    if (t.includes('vessel') || t.includes('pump') || t.includes('compressor') || t.includes('drum') || t.includes('exchanger') || t.includes('blower') || t.includes('tower') || t.includes('furnace') || t.includes('reactor') || t.includes('mixer') || t.includes('equipment')) return 'var(--color-vessel)';
+    return 'var(--secondary)';
   };
 
   const getConnectionColor = (type) => {
@@ -203,9 +202,14 @@ const PidViewer = ({
             const h = y1 - y0;
             
             // Skip rendering based on layer switches
-            if (sym.type === 'Instrument' && !layers.instrument) return null;
-            if (sym.type === 'Valve' && !layers.valve) return null;
-            if (sym.type === 'Vessel' && !layers.instrument) return null; // vessel grouped in instrument toggle
+            const t = sym.type.toLowerCase();
+            const isInstrument = t.includes('instrument');
+            const isValve = t.includes('valve');
+            const isVessel = t.includes('vessel') || t.includes('pump') || t.includes('compressor') || t.includes('drum') || t.includes('exchanger') || t.includes('blower') || t.includes('tower') || t.includes('furnace') || t.includes('reactor') || t.includes('mixer') || t.includes('equipment');
+            
+            if (isInstrument && !layers.instrument) return null;
+            if (isValve && !layers.valve) return null;
+            if (isVessel && !layers.instrument) return null; // vessel grouped in instrument toggle
 
             return (
               <g 
@@ -218,7 +222,7 @@ const PidViewer = ({
                 }}
               >
                 {/* Hover box/circle */}
-                {sym.type === 'Instrument' ? (
+                {sym.type.toLowerCase().includes('instrument') ? (
                   <circle
                     cx={sym.center[0]}
                     cy={sym.center[1]}
@@ -240,7 +244,7 @@ const PidViewer = ({
                     fill={isSelected ? 'rgba(249, 115, 22, 0.15)' : 'rgba(255,255,255,0.01)'}
                     stroke={color}
                     strokeWidth={isSelected ? 4 : 2}
-                    rx={sym.type === 'Valve' ? 4 : 8}
+                    rx={sym.type.toLowerCase().includes('valve') ? 4 : 8}
                     style={{
                       transition: 'all 0.2s',
                       filter: isSelected ? 'drop-shadow(0 0 6px ' + color + ')' : 'none'
